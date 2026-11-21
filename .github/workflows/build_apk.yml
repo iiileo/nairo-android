@@ -1,0 +1,144 @@
+name: Build APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: "17"
+          distribution: "zulu"
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # 默认含已废弃的 tools；API 37 包名为 android-37.0（无 android-37）
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Decode release keystore
+        env:
+          NAIRO_KEYSTORE_BASE64: ${{ secrets.NAIRO_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$NAIRO_KEYSTORE_BASE64" ]; then
+            echo "::error::缺少 Secret NAIRO_KEYSTORE_BASE64，拒绝使用 debug 签名"
+            exit 1
+          fi
+          echo "$NAIRO_KEYSTORE_BASE64" | base64 --decode > nairo-release.jks
+          ls -la nairo-release.jks
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace --no-configuration-cache
+
+      - name: Assemble release APK
+        env:
+          NAIRO_STORE_FILE: nairo-release.jks
+          NAIRO_STORE_PASSWORD: ${{ secrets.NAIRO_STORE_PASSWORD }}
+          NAIRO_KEY_ALIAS: ${{ secrets.NAIRO_KEY_ALIAS }}
+          NAIRO_KEY_PASSWORD: ${{ secrets.NAIRO_KEY_PASSWORD }}
+        run: |
+          if [ -z "$NAIRO_STORE_PASSWORD" ] || [ -z "$NAIRO_KEY_PASSWORD" ]; then
+            echo "::error::缺少 NAIRO_STORE_PASSWORD 或 NAIRO_KEY_PASSWORD"
+            exit 1
+          fi
+          if [ -z "$NAIRO_KEY_ALIAS" ]; then
+            echo "::error::缺少 NAIRO_KEY_ALIAS"
+            exit 1
+          fi
+          ./gradlew assembleRelease --stacktrace --no-configuration-cache
+
+      - name: Prepare release APK
+        id: apk
+        run: |
+          mkdir -p release
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$TAG" ]; then
+            VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+            TAG="v${VERSION}"
+          fi
+          SRC=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          DEST="release/nairo-app-${VERSION}-release.apk"
+          cp "$SRC" "$DEST"
+          ls -la release/
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "file=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nairo-release-apk
+          path: release/*.apk
+
+      - name: Publish to release repo (apk + latest.json)
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          # Fork 时可在仓库 Variables 设置 RELEASE_REPO=owner/name
+          RELEASE_REPO: ${{ vars.RELEASE_REPO || 'iiileo/nairo-android' }}
+          TAG: ${{ steps.apk.outputs.tag }}
+          VERSION: ${{ steps.apk.outputs.version }}
+          APK_FILE: ${{ steps.apk.outputs.file }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::缺少 Secret RELEASE_REPO_TOKEN（需有 $RELEASE_REPO 的写权限）"
+            exit 1
+          fi
+
+          VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          MIN_SDK=$(grep 'minSdk' app/build.gradle.kts | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          APK_NAME=$(basename "$APK_FILE")
+          SHA256=$(sha256sum "$APK_FILE" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$APK_FILE")
+          NOTES=$(git log -1 --pretty=%B | sed '/^Co-authored-by:/d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+          PUBLISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          APK_URL="https://github.com/${RELEASE_REPO}/releases/download/${TAG}/${APK_NAME}"
+
+          jq -n \
+            --arg vn "$VERSION" --argjson vc "$VERSION_CODE" --argjson sdk "$MIN_SDK" \
+            --arg tag "$TAG" --arg notes "$NOTES" --arg at "$PUBLISHED_AT" \
+            --arg name "$APK_NAME" --argjson size "$SIZE" --arg sha "$SHA256" --arg url "$APK_URL" \
+            '{schema:1, package:"com.nairo.app", version_name:$vn, version_code:$vc, min_sdk:$sdk,
+              tag:$tag, published_at:$at, notes:$notes, force:false,
+              mirrors:["https://gh-proxy.com/"],
+              apk:{name:$name, size:$size, sha256:$sha, url:$url}}' > release/latest.json
+          cat release/latest.json
+
+          TITLE="Nairo 奈洛 ${TAG}"
+          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_FILE" release/latest.json --clobber --repo "$RELEASE_REPO"
+            gh release edit "$TAG" --notes "$NOTES" --latest --repo "$RELEASE_REPO"
+          else
+            gh release create "$TAG" "$APK_FILE" release/latest.json \
+              --title "$TITLE" --notes "$NOTES" --latest --repo "$RELEASE_REPO"
+          fi
+
+          # 同步提交到发布仓库根目录（raw 地址备用）
+          B64=$(base64 -w0 release/latest.json)
+          SHA=$(gh api "repos/${RELEASE_REPO}/contents/latest.json" -q .sha 2>/dev/null || true)
+          if [ -n "$SHA" ]; then
+            gh api -X PUT "repos/${RELEASE_REPO}/contents/latest.json" \
+              -f message="release ${TAG}" -f content="$B64" -f sha="$SHA" >/dev/null
+          else
+            gh api -X PUT "repos/${RELEASE_REPO}/contents/latest.json" \
+              -f message="release ${TAG}" -f content="$B64" >/dev/null
+          fi
+
+          echo "Release URL:"
+          gh release view "$TAG" --repo "$RELEASE_REPO" --json url -q .url

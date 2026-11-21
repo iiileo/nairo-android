@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nairo</string>
+    <string name="listener_service_label">奈洛收款监听</string>
+    <string name="keepalive_channel">后台运行</string>
+    <string name="keepalive_channel_desc">保持收款监听在后台运行</string>
+    <string name="keepalive_title">奈洛正在运行</string>
+    <string name="keepalive_body">正在监听收款通知</string>
+</resources>
