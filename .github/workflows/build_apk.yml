@@ -88,7 +88,8 @@ jobs:
 
       - name: Publish to release repo (apk + latest.json)
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          # 发布到本仓库时用 GITHUB_TOKEN；发到其他仓再设 RELEASE_REPO_TOKEN
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           # Fork 时可在仓库 Variables 设置 RELEASE_REPO=owner/name
           RELEASE_REPO: ${{ vars.RELEASE_REPO || 'iiileo/nairo-android' }}
           TAG: ${{ steps.apk.outputs.tag }}
@@ -97,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::缺少 Secret RELEASE_REPO_TOKEN（需有 $RELEASE_REPO 的写权限）"
+            echo "::error::缺少可用的 GH_TOKEN（GITHUB_TOKEN 或 RELEASE_REPO_TOKEN）"
             exit 1
           fi
 

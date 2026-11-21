@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-> 公开源码仓。正式 APK 仍发布到 [`nairo-android` Releases](https://github.com/iiileo/nairo-android/releases)；请勿提交签名证书与 `keystore.properties`。
+> 正式 APK 见 [Releases](https://github.com/iiileo/nairo-android/releases)。请勿提交签名证书与 `keystore.properties`。
 
 Android 收款监听端：读取微信 / 支付宝系统收款通知，解析金额后签名上报 [Nairo API](https://github.com/iiileo/nairo-api)，并维持心跳与本地时间线。
 
@@ -85,7 +85,7 @@ git push origin v1.4.2
 | `NAIRO_STORE_PASSWORD` | 密钥库口令 |
 | `NAIRO_KEY_ALIAS` | 如 `nairo` |
 | `NAIRO_KEY_PASSWORD` | 密钥口令 |
-| `RELEASE_REPO_TOKEN` | 对 `iiileo/nairo-android` 有写权限的 token（发布 Release 与 `latest.json`） |
+| `RELEASE_REPO_TOKEN` | 可选；默认用 `GITHUB_TOKEN` 发布到本仓库。仅当发到其他仓时需要 |
 
 Fork 时请：
 
@@ -114,14 +114,6 @@ nairo_app/
 |------|------|
 | [nairo-api](https://github.com/iiileo/nairo-api) | 后端 + Console / Admin / 收银台 |
 | [nairo-android](https://github.com/iiileo/nairo-android) | 公开源码 + APK Releases / `latest.json` |
-
-## 同步到公开仓
-
-私有仓开发完成后，可用无历史方式覆盖同步到 `public` remote（`iiileo/nairo-android`）：
-
-```bash
-./scripts/push-public.sh
-```
 
 ## License
 
